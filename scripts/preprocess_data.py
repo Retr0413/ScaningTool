@@ -1,40 +1,40 @@
 import pandas as pd
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.preprocessing import StandardScaler, LabelEncoder, OneHotEncoder
 import numpy as np
+import os
 
 def preprocess_cve_data(file_path):
     """
     cve.csv データの前処理。
-    脆弱性のスコアや影響に関する特徴量を処理。
+    カテゴリ列をエンコードし、数値列は標準化。
     """
     df = pd.read_csv(file_path)
 
-    # 各特徴量の取得
-    cvss = df['cvss'].values.reshape(-1, 1)  # CVSSスコア
-    cwe_code = df['cwe_code'].values.reshape(-1, 1)  # CWEコード
+    # --- 数値特徴量の取得 ---
+    numeric_features = ['cvss', 'cwe_code', 'impact_availability', 
+                        'impact_confidentiality', 'impact_integrity']
 
-    # カテゴリ特徴量のラベルエンコード
-    encoder = LabelEncoder()
-    access_authentication = encoder.fit_transform(df['access_authentication']).reshape(-1, 1)
-    access_complexity = encoder.fit_transform(df['access_complexity']).reshape(-1, 1)
-    access_vector = encoder.fit_transform(df['access_vector']).reshape(-1, 1)
+    # 数値列の変換：文字列を NaN にし、欠損値を平均で埋める
+    for col in numeric_features:
+        df[col] = pd.to_numeric(df[col], errors='coerce')
+    df[numeric_features] = df[numeric_features].fillna(df[numeric_features].mean())
 
-    # 影響に関する特徴量
-    impact_availability = df['impact_availability'].values.reshape(-1, 1)
-    impact_confidentiality = df['impact_confidentiality'].values.reshape(-1, 1)
-    impact_integrity = df['impact_integrity'].values.reshape(-1, 1)
+    X_numeric = df[numeric_features].values
 
-    # 特徴量の結合
-    X = np.hstack([
-        cvss, cwe_code, access_authentication, access_complexity,
-        access_vector, impact_availability, impact_confidentiality, impact_integrity
-    ])
+    # --- カテゴリ特徴量のエンコード ---
+    categorical_features = ['access_authentication', 'access_complexity', 'access_vector']
+    encoder = OneHotEncoder(sparse_output=False, handle_unknown='ignore')
+    X_categorical = encoder.fit_transform(df[categorical_features])
 
-    # ラベル列のエンコード（summary列をカテゴリとして扱う）
-    y = encoder.fit_transform(df['summary'])
+    # --- 特徴量の結合 ---
+    X = np.hstack([X_numeric, X_categorical])
 
-    # データの標準化
+    # --- ラベル列のエンコード（summary列をラベル化） ---
+    label_encoder = LabelEncoder()
+    y = label_encoder.fit_transform(df['summary'])
+
+    # --- 数値列の標準化 ---
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
 
@@ -46,29 +46,33 @@ def preprocess_cve_data(file_path):
 def preprocess_csic_data(file_path):
     """
     csic_database.csv データの前処理。
-    HTTPリクエストの詳細に関する特徴量を処理。
+    HTTPリクエストの詳細をエンコードし、数値列は標準化。
     """
     df = pd.read_csv(file_path)
 
-    # HTTPメソッドのラベルエンコード
-    encoder = LabelEncoder()
-    method = encoder.fit_transform(df['Method']).reshape(-1, 1)
+    # --- 数値特徴量の取得 ---
+    numeric_features = ['lenght', 'content']
+    
+    # 数値列の変換：文字列を NaN にし、欠損値を平均で埋める
+    for col in numeric_features:
+        df[col] = pd.to_numeric(df[col], errors='coerce')
+    df[numeric_features] = df[numeric_features].fillna(df[numeric_features].mean())
 
-    # コンテンツタイプ、接続情報のラベルエンコード
-    content_type = encoder.fit_transform(df['content-type']).reshape(-1, 1)
-    connection = encoder.fit_transform(df['connection']).reshape(-1, 1)
+    X_numeric = df[numeric_features].values
 
-    # 数値特徴量の取得
-    lenght = df['lenght'].values.reshape(-1, 1)  # リクエストの長さ
-    content = df['content'].values.reshape(-1, 1)  # コンテンツサイズ
+    # --- カテゴリ特徴量のエンコード ---
+    categorical_features = ['Method', 'content-type', 'connection']
+    encoder = OneHotEncoder(sparse_output=False, handle_unknown='ignore')
+    X_categorical = encoder.fit_transform(df[categorical_features])
 
-    # 特徴量の結合
-    X = np.hstack([method, content_type, connection, lenght, content])
+    # --- 特徴量の結合 ---
+    X = np.hstack([X_numeric, X_categorical])
 
-    # ラベル列の取得（classification列をエンコード）
-    y = encoder.fit_transform(df['classification'])
+    # --- ラベル列のエンコード（classification列） ---
+    label_encoder = LabelEncoder()
+    y = label_encoder.fit_transform(df['classification'])
 
-    # データの標準化
+    # --- 数値列の標準化 ---
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
 
@@ -77,24 +81,34 @@ def preprocess_csic_data(file_path):
 
     return X_train, X_test, y_train, y_test
 
-# データをNumpy形式で保存する関数
+def create_directory_if_not_exists(directory):
+    """ディレクトリが存在しない場合に作成します。"""
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+
+# データをCSV形式で保存する関数
 def save_processed_data(prefix, X_train, X_test, y_train, y_test):
-    np.save(f'data/processed/{prefix}_X_train.npy', X_train)
-    np.save(f'data/processed/{prefix}_X_test.npy', X_test)
-    np.save(f'data/processed/{prefix}_y_train.npy', y_train)
-    np.save(f'data/processed/{prefix}_y_test.npy', y_test)
+    """CSVファイルを保存します。"""
+    directory = 'data/processed'
+    create_directory_if_not_exists(directory)  # ディレクトリが存在しなければ作成
+
+    # データをCSV形式で保存
+    pd.DataFrame(X_train).to_csv(f'{directory}/{prefix}_X_train.csv', index=False)
+    pd.DataFrame(X_test).to_csv(f'{directory}/{prefix}_X_test.csv', index=False)
+    pd.DataFrame(y_train).to_csv(f'{directory}/{prefix}_y_train.csv', index=False)
+    pd.DataFrame(y_test).to_csv(f'{directory}/{prefix}_y_test.csv', index=False)
 
 if __name__ == '__main__':
     # cve.csv の前処理と保存
     print("Processing cve.csv...")
     X_train, X_test, y_train, y_test = preprocess_cve_data(
-        'C:\\Users\\user\\Desktop\\ゼミ作成\\ScaningTool\\data\\datasets\\cve.csv'
+        '/Users/tarima/Desktop/Litalico/ScaningTool/data/datasets/cve.csv'
     )
     save_processed_data('vuln', X_train, X_test, y_train, y_test)
 
     # csic_database.csv の前処理と保存
     print("Processing csic_database.csv...")
     X_train, X_test, y_train, y_test = preprocess_csic_data(
-        'C:\\Users\\user\\Desktop\\ゼミ作成\\ScaningTool\\data\\datasets\\csic_database.csv'
+        '/Users/tarima/Desktop/Litalico/ScaningTool/data/datasets/csic_database.csv'
     )
     save_processed_data('ddos', X_train, X_test, y_train, y_test)
